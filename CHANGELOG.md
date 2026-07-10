@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-10
+
 ### Added
 
 - GitHub Actions workflow (`.github/workflows/publish.yml`) that publishes
@@ -77,6 +79,7 @@ cleanly and preserves token-level content (whitespace and trailing commas aside)
   `foo() { }`; a closure passed as an argument `foo({ })` is distinguished.
 - No spurious blank line after the `#!groovy` shebang.
 
-[Unreleased]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/releases/tag/v0.1.0

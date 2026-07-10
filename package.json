@@ -1,6 +1,6 @@
 {
   "name": "prettier-plugin-jenkinsfile",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Prettier plugin for Jenkins Declarative Pipeline files using tree-sitter-groovy",
   "type": "module",
   "main": "src/index.js",
