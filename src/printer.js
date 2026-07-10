@@ -185,7 +185,13 @@ function printJuxtFunctionCall(node, text, options) {
     return [fnName, " ", printClosure(argChildren[0], text, options, forceBlock)];
   }
 
-  // Multiple args in juxt call (rare)
+  // Multiple args in juxt call (e.g., writeFile file: 'x', text: y)
+  const mapItems = argChildren.filter((c) => c.type === "map_item");
+  if (mapItems.length > 0) {
+    const printedItems = mapItems.map((item) => printMapItem(item, text, options));
+    return [fnName, " ", join(", ", printedItems)];
+  }
+
   const printedArgs = argChildren.map((c) => printNode(c, text, options));
   return [fnName, " ", ...printedArgs];
 }
