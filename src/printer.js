@@ -138,10 +138,13 @@ function printSourceFile(node, text, options) {
  * Print a variable declaration: `def slack_channel = '#prdfam-ad-ci'`
  */
 function printDeclaration(node, text, options) {
-  const name = node.childForFieldName("name");
   const value = node.childForFieldName("value");
-  if (name && value) {
-    return ["def ", nodeText(name, text), " = ", printNode(value, text, options)];
+  if (value) {
+    // Preserve the exact prefix (modifiers + type/def + name + '=') from
+    // source — do NOT assume `def`, which would drop an explicit type like
+    // `String x = ...`. Only the value is reformatted.
+    const prefix = text.slice(node.startIndex, value.startIndex);
+    return [prefix, printNode(value, text, options)];
   }
   return nodeText(node, text);
 }
@@ -203,6 +206,13 @@ function printClosure(node, text, options, forceBlock = false) {
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     parts.push(hardline);
+    // Preserve a single blank line where the original source had one or more
+    // between this statement and the previous one.
+    if (g > 0) {
+      const prevRow = statements[groups[g - 1].end].endPosition.row;
+      const curRow = statements[group.start].startPosition.row;
+      if (curRow - prevRow > 1) parts.push(hardline);
+    }
     parts.push(printStatementGroup(group, statements, text, options));
 
     // Check if the next group is a single comment on the same line
@@ -275,7 +285,16 @@ function printFunctionCall(node, text, options) {
   if (!fn || !args) return nodeText(node, text);
 
   const fnName = nodeText(fn, text);
-  return [fnName, printArgumentList(args, text, options)];
+  return [fnName, printArgumentList(args, text, options, alwaysExpandArgs(fnName))];
+}
+
+/**
+ * terraform and ansible DSL steps (the terraform*, ansible*, tofu* family)
+ * always expand their named arguments to one per line (with a trailing comma)
+ * when they have any parameters, rather than collapsing to a single line.
+ */
+function alwaysExpandArgs(fnName) {
+  return /^(terraform|ansible|tofu)/i.test(fnName.trim());
 }
 
 /**
@@ -286,7 +305,7 @@ function printFunctionCall(node, text, options) {
  * - If args include a trailing closure: `('name') { ... }` pattern
  * - Otherwise: try to fit on one line
  */
-function printArgumentList(node, text, options) {
+function printArgumentList(node, text, options, alwaysExpand = false) {
   const children = node.namedChildren;
 
   if (children.length === 0) {
@@ -310,17 +329,37 @@ function printArgumentList(node, text, options) {
   }
 
   if (hasTrailingClosure && children.length === 1) {
-    // Pattern: function { ... } — closure is only arg
-    return [" ", printClosure(lastChild, text, options)];
+    // Only child is a closure. Distinguish a trailing closure `foo() { }`
+    // (closure after the `)`) from a closure passed as an argument `foo({ })`
+    // (closure before the `)`), preserving the original parens either way.
+    const closure = lastChild;
+    const argText = nodeText(node, text);
+    const closeParen = argText.indexOf(")");
+    const closureRel = closure.startIndex - node.startIndex;
+    if (closeParen !== -1 && closeParen < closureRel) {
+      // Trailing closure with (possibly empty) parens: `foo() { }`
+      return ["() ", printClosure(closure, text, options)];
+    }
+    // Closure is an argument inside the parens: `foo({ })`
+    return ["(", printClosure(closure, text, options), ")"];
   }
 
   if (hasMapItems) {
-    // Named arguments: keep inline when they fit, otherwise break to one
-    // argument per line with a trailing comma. Print ALL non-closure args
-    // (positional args mixed with named args must not be dropped).
+    // Print ALL non-closure args (positional args mixed with named args must
+    // not be dropped).
     const printedItems = children
       .filter((c) => c.type !== "closure")
       .map((c) => printNode(c, text, options));
+    if (alwaysExpand) {
+      // terraform/ansible family: always one arg per line with trailing comma.
+      return [
+        "(",
+        indent([hardline, join([",", hardline], printedItems), ","]),
+        hardline,
+        ")",
+      ];
+    }
+    // Otherwise: inline when it fits, else break to one arg per line.
     return group([
       "(",
       indent([softline, join([",", line], printedItems), ifBreak(",")]),
