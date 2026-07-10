@@ -30,6 +30,11 @@ export function printGroovyNode(path, options, print) {
  * Recursively print a tree-sitter node.
  */
 function printNode(node, text, options) {
+  // If this node IS a parse error, preserve its source text verbatim
+  if (node.type === "ERROR") {
+    return nodeText(node, text);
+  }
+
   switch (node.type) {
     case "source_file":
       return printSourceFile(node, text, options);
