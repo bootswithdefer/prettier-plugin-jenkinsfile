@@ -1,0 +1,8 @@
+- id: jenkinsfile-fmt
+  name: Format Jenkinsfiles
+  description: Format Jenkins pipeline and Groovy files with prettier-plugin-jenkinsfile.
+  entry: prettier-jenkinsfile
+  language: node
+  files: '(^|/)Jenkinsfile$|\.(groovy|gradle)$'
+  additional_dependencies:
+    - "prettier@^3.0.0"

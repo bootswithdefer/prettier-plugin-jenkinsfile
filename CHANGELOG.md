@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-10
+
+### Added
+
+- `bin/prettier-jenkinsfile.mjs` executable (`prettier-jenkinsfile`) that runs
+  Prettier with this plugin resolved by absolute path — works inside
+  pre-commit/prek's isolated node environment where `--plugin <name>`
+  resolution is unreliable.
+- `.pre-commit-hooks.yaml` exposing a `jenkinsfile-fmt` hook so consumers can
+  use this repo directly as a `pre-commit`/`prek` hook (Prettier's own
+  `mirrors-prettier` is archived and does not support Prettier 3.x). Usage:
+
+  ```yaml
+  - repo: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile
+    rev: v0.1.1
+    hooks:
+      - id: jenkinsfile-fmt
+  ```
+
+- `bin` field, `bin/` in published `files`, and an `engines.node >= 18`
+  constraint for npm publishing.
+
 ## [0.1.0] - 2026-07-10
 
 First versioned release. A Prettier plugin that formats Jenkins Declarative
@@ -44,5 +66,6 @@ cleanly and preserves token-level content (whitespace and trailing commas aside)
   `foo() { }`; a closure passed as an argument `foo({ })` is distinguished.
 - No spurious blank line after the `#!groovy` shebang.
 
-[Unreleased]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile/releases/tag/v0.1.0
