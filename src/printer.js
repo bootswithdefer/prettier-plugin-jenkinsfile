@@ -304,7 +304,7 @@ function alwaysExpandArgs(fnName) {
 const BLOCK_CLOSURE_FNS = new Set([
   "agent", "options", "triggers", "stages", "steps", "post",
   "environment", "parameters", "when", "parallel", "script",
-  "dir", "expression", "always", "anyOf", "stage", "container",
+  "dir", "expression", "always", "anyOf", "stage", "container", "not",
 ]);
 function forcesBlockClosure(fnName) {
   return BLOCK_CLOSURE_FNS.has(fnName.trim());
