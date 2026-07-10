@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Actions workflow (`.github/workflows/publish.yml`) that publishes
+  releases to npm via OIDC trusted publishing (no stored token, with
+  provenance), triggered on `v*` tags. Actions are pinned to commit SHAs.
+
+### Changed
+
+- README: replaced internal pipeline config in examples with generic ones,
+  linked the forked `tree-sitter-groovy`, and added pre-commit/prek setup.
+
 ## [0.1.1] - 2026-07-10
 
 ### Added

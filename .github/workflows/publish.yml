@@ -1,20 +1,18 @@
 name: Publish to npm
 
-# Publishes the package when a version tag (v*) is pushed. Uses npm "trusted
-# publishing" via OIDC — no NPM_TOKEN secret is stored. This requires a
-# one-time setup on npmjs.com (see below) AND the package must already exist,
-# so the very first release must be published manually.
+# Publishes on a version tag (v*) using npm "trusted publishing" via OIDC —
+# no NPM_TOKEN secret is stored, and provenance is attached automatically.
 #
-# One-time setup (after the first manual `npm publish`):
-#   npmjs.com -> the package -> Settings -> Trusted Publisher -> GitHub Actions
-#     Organization/user: bootswithdefer
-#     Repository:        prettier-plugin-jenkinsfile
-#     Workflow filename: publish.yml
+# One-time setup on npmjs.com (the package must already exist first):
+#   npmjs.com -> prettier-plugin-jenkinsfile -> Settings -> Trusted Publisher
+#     -> GitHub Actions:
+#        Organization/user: bootswithdefer
+#        Repository:        prettier-plugin-jenkinsfile
+#        Workflow filename: publish.yml
 #
-# Release flow thereafter:
+# Release flow:
 #   1. bump "version" in package.json + update CHANGELOG.md
 #   2. git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
-#   -> this workflow publishes vX.Y.Z with provenance.
 
 on:
   push:
@@ -30,13 +28,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: "22"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          always-auth: true
 
       # Trusted publishing requires npm >= 11.5.1.
       - name: Ensure recent npm
@@ -52,5 +49,5 @@ jobs:
             exit 1
           fi
 
-      - name: Publish
-        run: npm publish --provenance --access public
+      - run: npm ci
+      - run: npm publish --provenance --access public

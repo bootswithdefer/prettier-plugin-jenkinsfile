@@ -2,16 +2,16 @@
 
 A [Prettier](https://prettier.io/) plugin for formatting Jenkins Declarative Pipeline files (Jenkinsfile) and Groovy files.
 
-Uses [tree-sitter-groovy](https://github.com/murtaza64/tree-sitter-groovy) for parsing, producing AST-aware formatting that understands Groovy's named parameter syntax and Jenkins DSL patterns.
+Uses a [forked tree-sitter-groovy](https://github.com/bootswithdefer/tree-sitter-groovy) (extended from [murtaza64/tree-sitter-groovy](https://github.com/murtaza64/tree-sitter-groovy)) for parsing, producing AST-aware formatting that understands Groovy's named parameter syntax and Jenkins DSL patterns.
 
 ## Features
 
-- One named argument per line with trailing commas in function calls like `terraform()`, `ansible()`
-- Short closures kept inline: `{ opsVaultLogin() }`
+- `terraform()`, `ansible()`, and `tofu*` calls always expand named arguments one per line with trailing commas
+- Short single-statement closures kept inline (e.g. `retry(3) { sh 'make' }`)
 - Multi-statement closures expanded to block format
 - Triple-quoted strings (YAML pod specs) preserved verbatim
 - Proper 2-space indentation throughout
-- Jenkins DSL blocks (`pipeline`, `stages`, `stage`, `steps`, `agent`, etc.) formatted consistently
+- Jenkins DSL blocks (`pipeline`, `stages`, `stage`, `steps`, `agent`, `dir`, `when`, etc.) always kept in block form
 
 ## Installation
 
@@ -34,21 +34,36 @@ npx prettier --check Jenkinsfile
 
 The plugin automatically detects files named `Jenkinsfile` and files with `.groovy` or `.gradle` extensions.
 
+## Pre-commit / prek hook
+
+This repo ships a [pre-commit](https://pre-commit.com/) hook (also compatible with [prek](https://github.com/j178/prek)). Add it to your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile
+    rev: v0.1.1
+    hooks:
+      - id: jenkinsfile-fmt
+```
+
+The hook formats files named `Jenkinsfile` and files with `.groovy` or `.gradle` extensions on commit. It runs Prettier with this plugin in an isolated Node environment managed by pre-commit — no Node project or global install required.
+
 ## Example
 
 **Before:**
 ```groovy
 #!groovy
-def slack_channel = '#prdfam-ad-ci'
+def appName = 'my-service'
 pipeline {
-  agent {
-    label 'ec2-docker'
-  }
+  agent { label 'linux' }
   stages {
-    stage('terraform prod') {
+    stage('deploy') {
       steps {
         script {
-          terraform(workspace: 'prod',vault_callback:{opsVaultLogin()})
+          terraform(workspace: 'production', auto_approve: true)
+          retry(3) {
+            sh './deploy.sh'
+          }
         }
       }
     }
@@ -59,18 +74,20 @@ pipeline {
 **After:**
 ```groovy
 #!groovy
-
-def slack_channel = '#prdfam-ad-ci'
+def appName = 'my-service'
 pipeline {
-  agent { label 'ec2-docker' }
+  agent {
+    label 'linux'
+  }
   stages {
-    stage('terraform prod') {
+    stage('deploy') {
       steps {
         script {
           terraform(
-            workspace: 'prod',
-            vault_callback: { opsVaultLogin() },
+            workspace: 'production',
+            auto_approve: true,
           )
+          retry(3) { sh './deploy.sh' }
         }
       }
     }
