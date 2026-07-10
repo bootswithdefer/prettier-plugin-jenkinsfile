@@ -1,0 +1,36 @@
+{
+  "name": "prettier-plugin-jenkinsfile",
+  "version": "0.1.0",
+  "description": "Prettier plugin for Jenkins Declarative Pipeline files using tree-sitter-groovy",
+  "type": "module",
+  "main": "src/index.js",
+  "files": [
+    "src/",
+    "tree-sitter-groovy.wasm"
+  ],
+  "keywords": [
+    "prettier",
+    "plugin",
+    "groovy",
+    "jenkinsfile",
+    "jenkins",
+    "pipeline",
+    "formatter",
+    "tree-sitter"
+  ],
+  "author": "bootswithdefer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bootswithdefer/prettier-plugin-jenkinsfile.git"
+  },
+  "peerDependencies": {
+    "prettier": "^3.0.0"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.26.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.0"
+  }
+}
