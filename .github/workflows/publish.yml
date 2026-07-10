@@ -1,0 +1,56 @@
+name: Publish to npm
+
+# Publishes the package when a version tag (v*) is pushed. Uses npm "trusted
+# publishing" via OIDC — no NPM_TOKEN secret is stored. This requires a
+# one-time setup on npmjs.com (see below) AND the package must already exist,
+# so the very first release must be published manually.
+#
+# One-time setup (after the first manual `npm publish`):
+#   npmjs.com -> the package -> Settings -> Trusted Publisher -> GitHub Actions
+#     Organization/user: bootswithdefer
+#     Repository:        prettier-plugin-jenkinsfile
+#     Workflow filename: publish.yml
+#
+# Release flow thereafter:
+#   1. bump "version" in package.json + update CHANGELOG.md
+#   2. git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+#   -> this workflow publishes vX.Y.Z with provenance.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          always-auth: true
+
+      # Trusted publishing requires npm >= 11.5.1.
+      - name: Ensure recent npm
+        run: npm install -g npm@latest
+
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - name: Publish
+        run: npm publish --provenance --access public
