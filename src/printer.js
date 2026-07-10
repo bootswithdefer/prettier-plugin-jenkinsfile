@@ -247,11 +247,7 @@ function printJuxtFunctionCall(node, text, options) {
   const fnName = nodeText(fn, text);
 
   // Pipeline DSL blocks that should always be multi-line
-  const blockKeywords = new Set([
-    "agent", "options", "triggers", "stages", "steps", "post",
-    "environment", "parameters", "when", "parallel", "script",
-  ]);
-  const forceBlock = blockKeywords.has(fnName);
+  const forceBlock = forcesBlockClosure(fnName);
 
   // The args is an argument_list that contains either:
   // 1. A single closure (most DSL blocks): `stages { ... }`
@@ -285,7 +281,10 @@ function printFunctionCall(node, text, options) {
   if (!fn || !args) return nodeText(node, text);
 
   const fnName = nodeText(fn, text);
-  return [fnName, printArgumentList(args, text, options, alwaysExpandArgs(fnName))];
+  return [
+    fnName,
+    printArgumentList(args, text, options, alwaysExpandArgs(fnName), forcesBlockClosure(fnName)),
+  ];
 }
 
 /**
@@ -298,6 +297,20 @@ function alwaysExpandArgs(fnName) {
 }
 
 /**
+ * Function/DSL-block names whose trailing closure is always kept as a
+ * multi-line block (never collapsed to a single line), regardless of whether
+ * the call uses parens (`dir("x") { ... }`) or juxtaposition (`always { ... }`).
+ */
+const BLOCK_CLOSURE_FNS = new Set([
+  "agent", "options", "triggers", "stages", "steps", "post",
+  "environment", "parameters", "when", "parallel", "script",
+  "dir", "expression", "always", "anyOf", "stage", "container",
+]);
+function forcesBlockClosure(fnName) {
+  return BLOCK_CLOSURE_FNS.has(fnName.trim());
+}
+
+/**
  * Print an argument list `(...)`.
  *
  * Key logic:
@@ -305,7 +318,7 @@ function alwaysExpandArgs(fnName) {
  * - If args include a trailing closure: `('name') { ... }` pattern
  * - Otherwise: try to fit on one line
  */
-function printArgumentList(node, text, options, alwaysExpand = false) {
+function printArgumentList(node, text, options, alwaysExpand = false, forceBlock = false) {
   const children = node.namedChildren;
 
   if (children.length === 0) {
@@ -324,7 +337,7 @@ function printArgumentList(node, text, options, alwaysExpand = false) {
     // Pattern: function('arg1', 'arg2') { ... }
     const beforeClosure = children.slice(0, -1);
     const printedBefore = beforeClosure.map((c) => printNode(c, text, options));
-    const closurePart = printClosure(lastChild, text, options);
+    const closurePart = printClosure(lastChild, text, options, forceBlock);
     return ["(", join(", ", printedBefore), ") ", closurePart];
   }
 
