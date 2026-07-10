@@ -39,7 +39,7 @@ function printNode(node, text, options) {
     case "source_file":
       return printSourceFile(node, text, options);
     case "shebang":
-      return [nodeText(node, text), hardline];
+      return nodeText(node, text);
     case "comment":
       return nodeText(node, text);
     case "declaration":
@@ -72,14 +72,65 @@ function printNode(node, text, options) {
 }
 
 /**
+ * Group a node's named children into logical statements.
+ *
+ * A run of consecutive siblings where the next sibling starts on (or before)
+ * the row the current one ends on indicates the parser split a single logical
+ * source line into multiple statement nodes (a mis-parse, e.g. a method chain
+ * with a trailing closure in a deeply-nested command-syntax context). Such a
+ * run is emitted verbatim from source to avoid mangling it — preserving valid,
+ * correctly-indented code rather than reformatting a wrong AST. For normal
+ * code (one statement per line) every group is a single node, so this is a
+ * no-op.
+ */
+function groupStatements(children) {
+  const groups = [];
+  let i = 0;
+  while (i < children.length) {
+    let j = i;
+    while (
+      j + 1 < children.length &&
+      children[j + 1].startPosition.row <= children[j].endPosition.row
+    ) {
+      j++;
+    }
+    groups.push({ start: i, end: j });
+    i = j + 1;
+  }
+  return groups;
+}
+
+/**
+ * Print one logical-statement group: a single node via printNode, or a
+ * multi-node (mis-split) run as a verbatim source slice.
+ */
+function printStatementGroup(group, children, text, options) {
+  if (group.end === group.start) {
+    return printNode(children[group.start], text, options);
+  }
+  const startNode = children[group.start];
+  const endNode = children[group.end];
+  return text.slice(startNode.startIndex, endNode.endIndex);
+}
+
+/**
  * Print the source file (root node).
  */
 function printSourceFile(node, text, options) {
+  const children = node.namedChildren;
+  const groups = groupStatements(children);
   const parts = [];
-  for (const child of node.namedChildren) {
-    parts.push(printNode(child, text, options));
-    parts.push(hardline);
+  for (let g = 0; g < groups.length; g++) {
+    parts.push(printStatementGroup(groups[g], children, text, options));
+    if (g < groups.length - 1) {
+      parts.push(hardline);
+      // Preserve a single blank line where the original source had one or more.
+      const prevRow = children[groups[g].end].endPosition.row;
+      const nextRow = children[groups[g + 1].start].startPosition.row;
+      if (nextRow - prevRow > 1) parts.push(hardline);
+    }
   }
+  parts.push(hardline);
   return parts;
 }
 
@@ -117,10 +168,21 @@ function printPipeline(node, text, options) {
  * @param {boolean} forceBlock - force multi-line block format (for DSL blocks like agent, options)
  */
 function printClosure(node, text, options, forceBlock = false) {
-  const statements = node.namedChildren;
+  let statements = node.namedChildren;
+
+  // Extract closure parameters: `{ a, b -> ... }`. The parameter_list is the
+  // first named child when present; the `->` token is not a named node.
+  let paramPrefix = null;
+  if (statements.length > 0 && statements[0].type === "parameter_list") {
+    const params = statements[0].namedChildren.map((p) => nodeText(p, text));
+    paramPrefix = params.join(", ");
+    statements = statements.slice(1);
+  }
+
+  const open = paramPrefix !== null ? ["{ ", paramPrefix, " ->"] : ["{"];
 
   if (statements.length === 0) {
-    return "{}";
+    return paramPrefix !== null ? ["{ ", paramPrefix, " -> }"] : "{}";
   }
 
   // Single short statement: try inline (unless forceBlock)
@@ -129,30 +191,37 @@ function printClosure(node, text, options, forceBlock = false) {
     const innerText = nodeText(statements[0], text);
     // If it's short and has no newlines, allow inline
     if (innerText.length < 60 && !innerText.includes("\n")) {
-      return group(["{", indent([line, inner]), line, "}"]);
+      return group([...open, indent([line, inner]), line, "}"]);
     }
   }
 
   // Check for inline comments (comment on same line as preceding statement)
-  // Group them with the preceding statement instead of putting on a new line
+  // Group them with the preceding statement instead of putting on a new line.
+  // Also merge mis-split same-line sibling runs into verbatim source.
   const parts = [];
-  for (let i = 0; i < statements.length; i++) {
-    const stmt = statements[i];
+  const groups = groupStatements(statements);
+  for (let g = 0; g < groups.length; g++) {
+    const group = groups[g];
     parts.push(hardline);
-    parts.push(printNode(stmt, text, options));
+    parts.push(printStatementGroup(group, statements, text, options));
 
-    // Check if the next sibling is a comment on the same line
-    if (i + 1 < statements.length) {
-      const next = statements[i + 1];
-      if (next.type === "comment" && next.startPosition.row === stmt.endPosition.row) {
-        // Inline comment: put on same line with a space
+    // Check if the next group is a single comment on the same line
+    if (group.end === group.start && g + 1 < groups.length) {
+      const nextGroup = groups[g + 1];
+      const stmt = statements[group.end];
+      const next = statements[nextGroup.start];
+      if (
+        nextGroup.end === nextGroup.start &&
+        next.type === "comment" &&
+        next.startPosition.row === stmt.endPosition.row
+      ) {
         parts.push(" ");
         parts.push(printNode(next, text, options));
-        i++; // skip the comment in the next iteration
+        g++; // skip the comment group
       }
     }
   }
-  return ["{", indent(parts), hardline, "}"];
+  return [...open, indent(parts), hardline, "}"];
 }
 
 /**
@@ -246,12 +315,16 @@ function printArgumentList(node, text, options) {
   }
 
   if (hasMapItems) {
-    // Multi-line named arguments: one per line, trailing comma
-    const printedItems = mapItems.map((item) => printMapItem(item, text, options));
+    // Named arguments: keep inline when they fit, otherwise break to one
+    // argument per line with a trailing comma. Print ALL non-closure args
+    // (positional args mixed with named args must not be dropped).
+    const printedItems = children
+      .filter((c) => c.type !== "closure")
+      .map((c) => printNode(c, text, options));
     return group([
       "(",
-      indent([hardline, join(["," , hardline], printedItems), ","]),
-      hardline,
+      indent([softline, join([",", line], printedItems), ifBreak(",")]),
+      softline,
       ")",
     ]);
   }
