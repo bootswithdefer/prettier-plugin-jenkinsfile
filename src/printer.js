@@ -105,16 +105,21 @@ function printPipeline(node, text, options) {
 /**
  * Print a closure `{ ... }`.
  * Handles both single-statement closures (inline) and multi-statement (block).
+ *
+ * @param {object} node - tree-sitter node
+ * @param {string} text - source text
+ * @param {object} options - prettier options
+ * @param {boolean} forceBlock - force multi-line block format (for DSL blocks like agent, options)
  */
-function printClosure(node, text, options) {
+function printClosure(node, text, options, forceBlock = false) {
   const statements = node.namedChildren;
 
   if (statements.length === 0) {
     return "{}";
   }
 
-  // Single short statement: try inline
-  if (statements.length === 1) {
+  // Single short statement: try inline (unless forceBlock)
+  if (!forceBlock && statements.length === 1) {
     const inner = printNode(statements[0], text, options);
     const innerText = nodeText(statements[0], text);
     // If it's short and has no newlines, allow inline
@@ -123,11 +128,24 @@ function printClosure(node, text, options) {
     }
   }
 
-  // Multi-statement: always block
+  // Check for inline comments (comment on same line as preceding statement)
+  // Group them with the preceding statement instead of putting on a new line
   const parts = [];
-  for (const stmt of statements) {
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i];
     parts.push(hardline);
     parts.push(printNode(stmt, text, options));
+
+    // Check if the next sibling is a comment on the same line
+    if (i + 1 < statements.length) {
+      const next = statements[i + 1];
+      if (next.type === "comment" && next.startPosition.row === stmt.endPosition.row) {
+        // Inline comment: put on same line with a space
+        parts.push(" ");
+        parts.push(printNode(next, text, options));
+        i++; // skip the comment in the next iteration
+      }
+    }
   }
   return ["{", indent(parts), hardline, "}"];
 }
@@ -144,6 +162,13 @@ function printJuxtFunctionCall(node, text, options) {
 
   const fnName = nodeText(fn, text);
 
+  // Pipeline DSL blocks that should always be multi-line
+  const blockKeywords = new Set([
+    "agent", "options", "triggers", "stages", "steps", "post",
+    "environment", "parameters", "when", "parallel", "script",
+  ]);
+  const forceBlock = blockKeywords.has(fnName);
+
   // The args is an argument_list that contains either:
   // 1. A single closure (most DSL blocks): `stages { ... }`
   // 2. A string + closure: `stage('name') { ... }` — though this is actually function_call
@@ -152,7 +177,7 @@ function printJuxtFunctionCall(node, text, options) {
   const argChildren = args.namedChildren;
 
   if (argChildren.length === 1 && argChildren[0].type === "closure") {
-    return [fnName, " ", printClosure(argChildren[0], text, options)];
+    return [fnName, " ", printClosure(argChildren[0], text, options, forceBlock)];
   }
 
   // Multiple args in juxt call (rare)
