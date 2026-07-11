@@ -44,6 +44,8 @@ function printNode(node, text, options) {
       return nodeText(node, text);
     case "declaration":
       return printDeclaration(node, text, options);
+    case "assignment":
+      return printAssignment(node, text, options);
     case "pipeline":
       return printPipeline(node, text, options);
     case "closure":
@@ -147,6 +149,24 @@ function printDeclaration(node, text, options) {
     return [prefix, printNode(value, text, options)];
   }
   return nodeText(node, text);
+}
+
+/**
+ * Print an assignment: `output = terraform(...)`, `X += 1`.
+ * Preserves the exact LHS + operator prefix from source and reformats only
+ * the right-hand side, so an assignment-RHS DSL call (e.g. `x = terraform(...)`)
+ * still gets its arguments expanded. Increment/decrement forms (`i++`) have no
+ * separate RHS and are printed verbatim.
+ */
+function printAssignment(node, text, options) {
+  const named = node.namedChildren;
+  if (named.length < 2) {
+    // increment_op form (i++, --i) or anything unexpected: preserve source.
+    return nodeText(node, text);
+  }
+  const rhs = named[named.length - 1];
+  const prefix = text.slice(node.startIndex, rhs.startIndex).trimEnd();
+  return [prefix, " ", printNode(rhs, text, options)];
 }
 
 /**
