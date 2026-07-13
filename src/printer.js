@@ -7,7 +7,7 @@
 
 const {
   doc: {
-    builders: { group, indent, hardline, softline, line, join, ifBreak },
+    builders: { group, indent, hardline, softline, line, join, ifBreak, lineSuffix },
   },
 } = await import("prettier");
 
@@ -103,6 +103,31 @@ function groupStatements(children) {
 }
 
 /**
+ * Like groupStatements but refuses to extend a group when the next sibling is
+ * a comment AND the current node spans multiple lines. This prevents a trailing
+ * comment (e.g. `} // pipeline`) from absorbing the preceding multi-line block
+ * into a verbatim run, while still allowing single-line statements with same-row
+ * comments to be grouped (preserving mis-split detection for one-liners).
+ */
+function groupStatementsExcludeComments(children) {
+  const groups = [];
+  let i = 0;
+  while (i < children.length) {
+    let j = i;
+    while (
+      j + 1 < children.length &&
+      children[j + 1].startPosition.row <= children[j].endPosition.row &&
+      !(children[j + 1].type === "comment" && children[j].endPosition.row > children[j].startPosition.row)
+    ) {
+      j++;
+    }
+    groups.push({ start: i, end: j });
+    i = j + 1;
+  }
+  return groups;
+}
+
+/**
  * Print one logical-statement group: a single node via printNode, or a
  * multi-node (mis-split) run as a verbatim source slice.
  */
@@ -120,10 +145,29 @@ function printStatementGroup(group, children, text, options) {
  */
 function printSourceFile(node, text, options) {
   const children = node.namedChildren;
-  const groups = groupStatements(children);
+  // Use comment-excluding grouping at the source_file level to prevent a
+  // trailing comment (e.g. `} // pipeline`) from grouping with and causing the
+  // preceding multi-line block to be printed verbatim.
+  const groups = groupStatementsExcludeComments(children);
   const parts = [];
   for (let g = 0; g < groups.length; g++) {
     parts.push(printStatementGroup(groups[g], children, text, options));
+
+    // Attach a trailing comment on the same line as the previous statement.
+    if (g + 1 < groups.length) {
+      const nextGroup = groups[g + 1];
+      const curEnd = children[groups[g].end];
+      const next = children[nextGroup.start];
+      if (
+        nextGroup.end === nextGroup.start &&
+        next.type === "comment" &&
+        next.startPosition.row === curEnd.endPosition.row
+      ) {
+        parts.push(lineSuffix([" ", nodeText(next, text)]));
+        g++; // skip the comment group
+      }
+    }
+
     if (g < groups.length - 1) {
       parts.push(hardline);
       // Preserve a single blank line where the original source had one or more.
@@ -222,7 +266,7 @@ function printClosure(node, text, options, forceBlock = false) {
   // Group them with the preceding statement instead of putting on a new line.
   // Also merge mis-split same-line sibling runs into verbatim source.
   const parts = [];
-  const groups = groupStatements(statements);
+  const groups = groupStatementsExcludeComments(statements);
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     parts.push(hardline);
@@ -352,6 +396,12 @@ function printArgumentList(node, text, options, alwaysExpand = false, forceBlock
   // Check if we have map_items (named args)
   const mapItems = children.filter((c) => c.type === "map_item");
   const hasMapItems = mapItems.length > 0;
+  // A `//` line comment among the args runs to end-of-line, so collapsing such
+  // an argument list onto one line would comment out the closing paren (and any
+  // following args). When present, force the multi-line one-arg-per-line form.
+  const hasLineComment = children.some(
+    (c) => c.type === "comment" && nodeText(c, text).replace(/^\s+/, "").startsWith("//"),
+  );
 
   if (hasTrailingClosure && children.length >= 2) {
     // Pattern: function('arg1', 'arg2') { ... }
@@ -378,16 +428,32 @@ function printArgumentList(node, text, options, alwaysExpand = false, forceBlock
   }
 
   if (hasMapItems) {
-    // Print ALL non-closure args (positional args mixed with named args must
-    // not be dropped).
-    const printedItems = children
-      .filter((c) => c.type !== "closure")
-      .map((c) => printNode(c, text, options));
-    if (alwaysExpand) {
-      // terraform/ansible family: always one arg per line with trailing comma.
+    // Print ALL non-closure, non-comment args (positional args mixed with
+    // named args must not be dropped). Comments are attached to the preceding
+    // item via lineSuffix so they don't get spurious commas.
+    const items = children.filter((c) => c.type !== "closure");
+    const printedParts = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type === "comment") {
+        // Attach comment to the preceding item (or as standalone if first)
+        if (printedParts.length > 0) {
+          printedParts[printedParts.length - 1] = [
+            printedParts[printedParts.length - 1],
+            lineSuffix([" ", nodeText(items[i], text)]),
+          ];
+        } else {
+          printedParts.push(nodeText(items[i], text));
+        }
+      } else {
+        printedParts.push(printNode(items[i], text, options));
+      }
+    }
+    if (alwaysExpand || hasLineComment) {
+      // terraform/ansible family (or any arg list with a line comment): always
+      // one arg per line with trailing comma.
       return [
         "(",
-        indent([hardline, join([",", hardline], printedItems), ","]),
+        indent([hardline, join([",", hardline], printedParts), ","]),
         hardline,
         ")",
       ];
@@ -395,15 +461,34 @@ function printArgumentList(node, text, options, alwaysExpand = false, forceBlock
     // Otherwise: inline when it fits, else break to one arg per line.
     return group([
       "(",
-      indent([softline, join([",", line], printedItems), ifBreak(",")]),
+      indent([softline, join([",", line], printedParts), ifBreak(",")]),
       softline,
       ")",
     ]);
   }
 
-  // Simple args: try inline
-  const printedArgs = children.map((c) => printNode(c, text, options));
-  return group(["(", join(", ", printedArgs), ")"]);
+  // Simple args (positional). Attach comments to the preceding arg via
+  // lineSuffix (so they aren't treated as comma-separated items), and force
+  // the multi-line form when a line comment is present.
+  const simpleParts = [];
+  for (let i = 0; i < children.length; i++) {
+    if (children[i].type === "comment") {
+      if (simpleParts.length > 0) {
+        simpleParts[simpleParts.length - 1] = [
+          simpleParts[simpleParts.length - 1],
+          lineSuffix([" ", nodeText(children[i], text)]),
+        ];
+      } else {
+        simpleParts.push(nodeText(children[i], text));
+      }
+    } else {
+      simpleParts.push(printNode(children[i], text, options));
+    }
+  }
+  if (hasLineComment) {
+    return ["(", indent([hardline, join([",", hardline], simpleParts)]), hardline, ")"];
+  }
+  return group(["(", join(", ", simpleParts), ")"]);
 }
 
 /**
