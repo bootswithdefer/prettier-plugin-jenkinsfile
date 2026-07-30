@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Control-flow statements are now formatted instead of being emitted verbatim.
+  `if` / `else if` / `else`, `for`, for-in, `while`, `do`/`while`,
+  `try`/`catch`/`finally`, `return` and `throw` previously fell through to the
+  unknown-node fallback, so their bodies kept whatever indentation the source
+  had — a badly indented `if` inside a `script { }` block survived formatting
+  untouched. Bodies are now reformatted as blocks.
+- Function and class bodies are now formatted. `def foo() { ... }`,
+  `String bar() { ... }` and `class Baz { ... }` were previously printed
+  verbatim in their entirety, so helper methods at the bottom of a Jenkinsfile
+  were never formatted. Everything before the body (annotations, modifiers,
+  return type, name, parameter list, `extends`/`implements`) is still preserved
+  exactly as written; only the body is reformatted.
+
+### Fixed
+
+- A juxtaposition call is no longer given a space between the callee and its
+  arguments when the source had none. Groovy's command syntax requires
+  whitespace, so `arnArr[4]` — which the grammar resolves to a
+  `juxt_function_call` with a list argument — was being re-emitted as
+  `arnArr [4]`, changing its meaning. Source adjacency is now preserved.
+- `for (x : xs)` is no longer rewritten to `for (x in xs)`; whichever separator
+  the source used is kept.
+
 ## [0.2.1] - 2026-07-12
 
 ### Fixed

@@ -63,6 +63,28 @@ function printNode(node, text, options) {
     case "boolean_literal":
     case "null":
       return nodeText(node, text);
+    case "if_statement":
+      return printIfStatement(node, text, options);
+    case "function_definition":
+    case "class_definition":
+      return printBodiedDefinition(node, text, options);
+    case "for_loop":
+      return printForLoop(node, text, options);
+    case "for_in_loop":
+      return printForInLoop(node, text, options);
+    case "while_loop":
+      return printWhileLoop(node, text, options);
+    case "do_while_loop":
+      return printDoWhileLoop(node, text, options);
+    case "try_statement":
+      return printTryStatement(node, text, options);
+    case "return":
+      return printReturn(node, text, options);
+    case "break":
+    case "continue":
+      return nodeText(node, text);
+    case "throw":
+      return printThrow(node, text, options);
     case "identifier":
       return nodeText(node, text);
     case "label":
@@ -310,6 +332,12 @@ function printJuxtFunctionCall(node, text, options) {
 
   const fnName = nodeText(fn, text);
 
+  // Only separate the callee from its arguments if the source did. Groovy's
+  // command syntax *requires* whitespace, so a juxt_function_call with no gap
+  // is really an index/subscript that the parser resolved this way
+  // (`arnArr[4]`); emitting `arnArr [4]` there would change the meaning.
+  const gap = args.startIndex > fn.endIndex ? " " : "";
+
   // Pipeline DSL blocks that should always be multi-line
   const forceBlock = forcesBlockClosure(fnName);
 
@@ -321,18 +349,18 @@ function printJuxtFunctionCall(node, text, options) {
   const argChildren = args.namedChildren;
 
   if (argChildren.length === 1 && argChildren[0].type === "closure") {
-    return [fnName, " ", printClosure(argChildren[0], text, options, forceBlock)];
+    return [fnName, gap, printClosure(argChildren[0], text, options, forceBlock)];
   }
 
   // Multiple args in juxt call (e.g., writeFile file: 'x', text: y)
   const mapItems = argChildren.filter((c) => c.type === "map_item");
   if (mapItems.length > 0) {
     const printedItems = mapItems.map((item) => printMapItem(item, text, options));
-    return [fnName, " ", join(", ", printedItems)];
+    return [fnName, gap, join(", ", printedItems)];
   }
 
   const printedArgs = argChildren.map((c) => printNode(c, text, options));
-  return [fnName, " ", ...printedArgs];
+  return [fnName, gap, ...printedArgs];
 }
 
 /**
@@ -504,6 +532,238 @@ function printMapItem(node, text, options) {
   const valuePart = printNode(value, text, options);
 
   return [keyStr, ": ", valuePart];
+}
+
+/**
+ * Print a definition whose only reformattable part is a trailing body closure:
+ * `def foo(a, b) { ... }`, `String bar() { ... }`, `class Baz { ... }`.
+ *
+ * Everything before the body (annotations, modifiers, return type, name,
+ * parameter list, `extends`/`implements` clauses) is preserved verbatim from
+ * source, following the same rule as `printDeclaration` — the prefix is never
+ * rewritten, so an explicit return type or modifier list survives untouched.
+ * Only the body is reformatted, as a forced block.
+ */
+function printBodiedDefinition(node, text, options) {
+  const body = node.childForFieldName("body");
+  if (!body || body.type !== "closure") {
+    return nodeText(node, text);
+  }
+  const prefix = text.slice(node.startIndex, body.startIndex).trimEnd();
+  return [prefix, " ", printClosure(body, text, options, true)];
+}
+
+/**
+ * Print an if/else-if/else statement.
+ * `if (condition) { body } else if (condition) { body } else { body }`
+ */
+function printIfStatement(node, text, options) {
+  const condition = node.childForFieldName("condition");
+  const body = node.childForFieldName("body");
+  const elseBody = node.childForFieldName("else_body");
+
+  // condition is a parenthesized_expression that already includes the parens
+  const parts = ["if ", printNode(condition, text, options), " "];
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  if (elseBody) {
+    if (elseBody.type === "if_statement") {
+      // else-if chain: `} else if (...) { ... }`
+      parts.push(" else ", printIfStatement(elseBody, text, options));
+    } else if (elseBody.type === "closure") {
+      parts.push(" else ", printClosure(elseBody, text, options, true));
+    } else {
+      parts.push(" else ", printNode(elseBody, text, options));
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Print a C-style for loop: `for (init; cond; incr) { body }`
+ */
+function printForLoop(node, text, options) {
+  const body = node.childForFieldName("body");
+  const forParams = node.namedChildren.find((c) => c.type === "for_parameters");
+
+  // for_parameters already includes its surrounding parens
+  const parts = ["for "];
+  if (forParams) {
+    parts.push(nodeText(forParams, text));
+  }
+  parts.push(" ");
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Print a for-in loop: `for (type? variable in collection) { body }`
+ */
+function printForInLoop(node, text, options) {
+  const variable = node.childForFieldName("variable");
+  const typeNode = node.childForFieldName("type");
+  const collection = node.childForFieldName("collection");
+  const body = node.childForFieldName("body");
+
+  const parts = ["for ("];
+  if (typeNode) {
+    parts.push(nodeText(typeNode, text), " ");
+  }
+  if (variable) {
+    parts.push(nodeText(variable, text));
+  }
+  // Groovy accepts both `for (x in xs)` and `for (x : xs)`; preserve whichever
+  // the source used rather than normalising one into the other.
+  const sep =
+    collection && text.slice(variable ? variable.endIndex : node.startIndex, collection.startIndex).includes(":")
+      ? " : "
+      : " in ";
+  parts.push(sep);
+  if (collection) {
+    parts.push(printNode(collection, text, options));
+  }
+  parts.push(") ");
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Print a while loop: `while (condition) { body }`
+ */
+function printWhileLoop(node, text, options) {
+  const condition = node.childForFieldName("condition");
+  const body = node.childForFieldName("body");
+
+  // condition is a parenthesized_expression that already includes the parens
+  const parts = ["while ", printNode(condition, text, options), " "];
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Print a do-while loop: `do { body } while (condition)`
+ */
+function printDoWhileLoop(node, text, options) {
+  const body = node.childForFieldName("body");
+  const condition = node.childForFieldName("condition");
+
+  const parts = ["do "];
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  parts.push(" while ", printNode(condition, text, options));
+
+  return parts;
+}
+
+/**
+ * Print a try/catch/finally statement.
+ * `try { body } catch (exception) { catch_body } finally { finally_body }`
+ */
+function printTryStatement(node, text, options) {
+  const body = node.childForFieldName("body");
+  const catchException = node.childForFieldName("catch_exception");
+  const catchBody = node.childForFieldName("catch_body");
+  const finallyBody = node.childForFieldName("finally_body");
+
+  const parts = ["try "];
+
+  if (body) {
+    if (body.type === "closure") {
+      parts.push(printClosure(body, text, options, true));
+    } else {
+      parts.push(printNode(body, text, options));
+    }
+  }
+
+  if (catchBody) {
+    parts.push(" catch (");
+    if (catchException) {
+      parts.push(nodeText(catchException, text));
+    }
+    parts.push(") ");
+    if (catchBody.type === "closure") {
+      parts.push(printClosure(catchBody, text, options, true));
+    } else {
+      parts.push(printNode(catchBody, text, options));
+    }
+  }
+
+  if (finallyBody) {
+    parts.push(" finally ");
+    if (finallyBody.type === "closure") {
+      parts.push(printClosure(finallyBody, text, options, true));
+    } else {
+      parts.push(printNode(finallyBody, text, options));
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Print a return statement: `return expr` or just `return`.
+ *
+ * Falls back to verbatim source unless there is exactly one named child to
+ * format. Some return operands are anonymous tokens rather than named nodes
+ * (notably `return this`), so keying off `namedChildren` alone would silently
+ * drop them.
+ */
+function printReturn(node, text, options) {
+  const children = node.namedChildren;
+  if (children.length === 1) {
+    return ["return ", printNode(children[0], text, options)];
+  }
+  return nodeText(node, text);
+}
+
+/**
+ * Print a throw statement: `throw expr`. Verbatim fallback as for `return`.
+ */
+function printThrow(node, text, options) {
+  const children = node.namedChildren;
+  if (children.length === 1) {
+    return ["throw ", printNode(children[0], text, options)];
+  }
+  return nodeText(node, text);
 }
 
 /**
