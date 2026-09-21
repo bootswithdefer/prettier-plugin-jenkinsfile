@@ -41,7 +41,7 @@ This repo ships a [pre-commit](https://pre-commit.com/) hook (also compatible wi
 ```yaml
 repos:
   - repo: https://github.com/bootswithdefer/prettier-plugin-jenkinsfile
-    rev: v0.1.2
+    rev: v0.3.0
     hooks:
       - id: jenkinsfile-fmt
 ```
